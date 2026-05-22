@@ -1,3 +1,7 @@
+# app.py — Customer Segmentation & Repurchase Prediction
+# Chạy: streamlit run app.py
+# Yêu cầu: pip install streamlit pandas numpy scikit-learn xgboost plotly
+
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -211,7 +215,6 @@ hr { border-color: #2A2835 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-
 # ─────────────────────────────────────────────
 # LOAD MODEL
 # ─────────────────────────────────────────────
@@ -232,7 +235,6 @@ CLASSIFIERS  = model["segment_classifiers"]
 CLUSTER_LBLS = model["cluster_labels"]
 ANALYSIS_DT  = model["analysis_date"]
 
-
 # ─────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────
@@ -245,7 +247,6 @@ SEG_META = {
 }
 
 BAR_COLORS = ["#7C6AF5", "#4CAF80", "#F5C842", "#E5854A", "#E24B4A"]
-
 
 def compute_rfmt(txn_df: pd.DataFrame, analysis_date: pd.Timestamp):
     """Tính R, F, M, T từ bảng giao dịch thô."""
@@ -267,7 +268,6 @@ def compute_rfmt(txn_df: pd.DataFrame, analysis_date: pd.Timestamp):
 
     return recency, frequency, monetary, t_val
 
-
 def predict(recency, frequency, monetary, t_val):
     """Scale → KMeans cluster → XGB proba."""
     X_rfmt   = pd.DataFrame([[recency, frequency, monetary, t_val]],
@@ -284,7 +284,6 @@ def predict(recency, frequency, monetary, t_val):
         will_return_proba = None
 
     return cluster, seg_name, will_return_proba
-
 
 # ─────────────────────────────────────────────
 # SIDEBAR — INPUT
@@ -354,7 +353,6 @@ with st.sidebar:
         </div>
     """, unsafe_allow_html=True)
 
-
 # ─────────────────────────────────────────────
 # MAIN PANEL
 # ─────────────────────────────────────────────
@@ -403,7 +401,6 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-
 # ── RUN PREDICTION ───────────────────────────────────────────────
 if run_btn:
     df = edited_df.copy()
@@ -434,7 +431,6 @@ if run_btn:
             st.rerun()
         except Exception as e:
             st.error(f"Lỗi khi xử lý: {e}")
-
 
 # ── DISPLAY RESULTS ──────────────────────────────────────────────
 if has_result:
