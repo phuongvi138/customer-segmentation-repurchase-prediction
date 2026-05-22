@@ -222,7 +222,7 @@ hr { border-color: #2A2835 !important; }
 # LOAD MODEL
 # ─────────────────────────────────────────────
 @st.cache_resource
-def load_model(path="src/hybrid_customer_segmentation_prediction_model (1).pkl"):
+def load_model(path="hybrid_customer_segmentation_prediction_model__1_.pkl"):
     with open(path, "rb") as f:
         return pickle.load(f)
 
