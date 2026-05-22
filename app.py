@@ -1,218 +1,576 @@
-import streamlit as st
-import pandas as pd
+"""
+app.py — Customer Segmentation & Repurchase Prediction
+Chạy: streamlit run app.py
+Yêu cầu: pip install streamlit pandas numpy scikit-learn xgboost plotly
+"""
+
+import warnings
+warnings.filterwarnings("ignore")
+
+import pickle
+import datetime as dt
 import numpy as np
-import joblib
+import pandas as pd
+import streamlit as st
+import plotly.graph_objects as go
 
-# ==========================================
-# 1. GIAO DIỆN CHÍNH & PHONG CÁCH
-# ==========================================
-st.set_page_config(page_title="CRM Analytics & Prediction Dashboard", page_icon="🛍️", layout="wide")
+# ─────────────────────────────────────────────
+# PAGE CONFIG
+# ─────────────────────────────────────────────
+st.set_page_config(
+    page_title="Customer Segmentation",
+    page_icon="🎯",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-st.title("🛍️ Phân đoạn Khách hàng & Dự đoán Tái mua hàng")
-st.markdown("Ứng dụng tự động chuyển đổi Dữ liệu giao dịch thô (Raw Data) thành chỉ số hành vi **RFMT**, thực hiện phân cụm và dự báo hành vi tương lai bằng mô hình Hybrid.")
-st.write("---")
+# ─────────────────────────────────────────────
+# CUSTOM CSS
+# ─────────────────────────────────────────────
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap');
 
-# ==========================================
-# 2. TẢI VÀ BÓC TÁCH FILE .PKL CHUẨN XÁC
-# ==========================================
-MODEL_PATH = "hybrid_customer_segmentation_prediction_model (1).pkl" 
+html, body, [class*="css"] {
+    font-family: 'DM Sans', sans-serif;
+}
 
+/* ── Main background ── */
+.stApp { background: #0F0F13; color: #E8E6F0; }
+
+/* ── Sidebar ── */
+[data-testid="stSidebar"] {
+    background: #16151C !important;
+    border-right: 1px solid #2A2835;
+}
+[data-testid="stSidebar"] * { color: #C8C4D8 !important; }
+
+/* ── Section headers ── */
+.section-title {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: #6B6880;
+    margin: 20px 0 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #2A2835;
+}
+
+/* ── Metric cards ── */
+.rfmt-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin: 12px 0;
+}
+.rfmt-card {
+    background: #1A1925;
+    border: 1px solid #2A2835;
+    border-radius: 12px;
+    padding: 14px 16px;
+    position: relative;
+    overflow: hidden;
+}
+.rfmt-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--accent);
+}
+.rfmt-letter {
+    font-family: 'DM Mono', monospace;
+    font-size: 28px;
+    font-weight: 500;
+    color: var(--accent);
+    line-height: 1;
+}
+.rfmt-name {
+    font-size: 10px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: #6B6880;
+    margin-top: 2px;
+    margin-bottom: 10px;
+}
+.rfmt-value {
+    font-size: 22px;
+    font-weight: 600;
+    color: #E8E6F0;
+    line-height: 1;
+}
+.rfmt-unit {
+    font-size: 11px;
+    color: #6B6880;
+    margin-left: 3px;
+}
+
+/* ── Segment banner ── */
+.seg-banner {
+    background: #1A1925;
+    border: 1px solid var(--seg-color);
+    border-radius: 14px;
+    padding: 18px 22px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin: 14px 0;
+    position: relative;
+    overflow: hidden;
+}
+.seg-banner::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--seg-color);
+    opacity: .05;
+    pointer-events: none;
+}
+.seg-icon { font-size: 36px; }
+.seg-label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: #6B6880; }
+.seg-name  { font-size: 22px; font-weight: 600; color: #E8E6F0; margin: 2px 0; }
+.seg-meta  { font-size: 12px; color: #6B6880; }
+
+/* ── Proba bar ── */
+.proba-row  { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+.proba-label{ width: 170px; font-size: 12px; color: #C8C4D8; flex-shrink: 0; }
+.proba-bar  {
+    flex: 1; height: 6px; background: #2A2835; border-radius: 3px; overflow: hidden;
+}
+.proba-fill { height: 100%; border-radius: 3px; transition: width .5s ease; }
+.proba-pct  { width: 40px; text-align: right; font-size: 11px;
+              font-family: 'DM Mono', monospace; color: #6B6880; }
+
+/* ── Recommendation box ── */
+.rec-box {
+    background: #1A1925;
+    border-left: 3px solid #7C6AF5;
+    border-radius: 0 10px 10px 0;
+    padding: 12px 16px;
+    font-size: 13px;
+    color: #C8C4D8;
+    line-height: 1.7;
+    margin-top: 10px;
+}
+.rec-box strong { color: #E8E6F0; }
+
+/* ── Pipeline steps ── */
+.pipeline {
+    display: flex; align-items: center; gap: 0; margin: 16px 0;
+    padding: 12px 16px;
+    background: #1A1925; border-radius: 10px;
+}
+.pip-step { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; }
+.pip-dot  {
+    width: 30px; height: 30px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 600; font-family: 'DM Mono', monospace;
+}
+.pip-done   { background: #7C6AF5; color: #fff; }
+.pip-active { background: transparent; border: 2px solid #7C6AF5; color: #7C6AF5; }
+.pip-idle   { background: #2A2835; color: #6B6880; }
+.pip-lbl    { font-size: 9px; letter-spacing: .06em; text-transform: uppercase;
+              color: #6B6880; text-align: center; line-height: 1.3; }
+.pip-line   { flex: 0 0 20px; height: 1px; background: #2A2835; }
+.pip-line-done { background: #7C6AF5; }
+
+/* ── Transaction table ── */
+.txn-df table { font-size: 12px !important; }
+
+/* ── Buttons ── */
+.stButton > button {
+    background: #7C6AF5 !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-family: 'DM Sans', sans-serif !important;
+    font-weight: 500 !important;
+    padding: 10px 20px !important;
+}
+.stButton > button:hover { background: #6A58E0 !important; }
+
+/* ── Data editor ── */
+[data-testid="stDataFrame"] { border-radius: 8px; overflow: hidden; }
+
+/* ── Divider ── */
+hr { border-color: #2A2835 !important; }
+
+/* ── Number input ── */
+[data-testid="stNumberInput"] input {
+    background: #1A1925 !important;
+    border: 1px solid #2A2835 !important;
+    color: #E8E6F0 !important;
+    border-radius: 8px !important;
+    font-family: 'DM Mono', monospace !important;
+}
+
+/* ── Expander ── */
+[data-testid="stExpander"] {
+    background: #1A1925 !important;
+    border: 1px solid #2A2835 !important;
+    border-radius: 10px !important;
+}
+
+/* ── Alerts ── */
+.stAlert { border-radius: 10px !important; }
+</style>
+""", unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────────────
+# LOAD MODEL
+# ─────────────────────────────────────────────
 @st.cache_resource
-def load_models():
-    try:
-        return joblib.load(MODEL_PATH)
-    except Exception as e:
-        return str(e)
+def load_model(path="hybrid_customer_segmentation_prediction_model (1).pkl"):
+    with open(path, "rb") as f:
+        return pickle.load(f)
 
-pkl_obj = load_models()
-scaler, kmeans, prediction_model = None, None, None
+try:
+    model = load_model()
+except FileNotFoundError:
+    st.error("❌ Không tìm thấy file model pkl. Đặt file cùng thư mục với app.py")
+    st.stop()
 
-if isinstance(pkl_obj, dict):
-    for k, v in pkl_obj.items():
-        k_lower = k.lower()
-        if 'scale' in k_lower: scaler = v
-        elif 'mean' in k_lower or 'cluster' in k_lower: kmeans = v
-        elif 'model' in k_lower or 'xgb' in k_lower or 'class' in k_lower or 'pred' in k_lower: prediction_model = v
+SCALER       = model["scaler"]
+KMEANS       = model["kmeans_model"]
+CLASSIFIERS  = model["segment_classifiers"]
+CLUSTER_LBLS = model["cluster_labels"]
+ANALYSIS_DT  = model["analysis_date"]
 
-# Hiển thị trạng thái kết nối mô hình ở thanh bên
-st.sidebar.header("⚙️ Cấu hình Hệ thống")
-if None not in [scaler, kmeans, prediction_model]:
-    st.sidebar.success("✅ Đã kết nối thành công Bộ ba Mô hình AI!")
+
+# ─────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────
+SEG_META = {
+    "At-Risk / Dormant":    {"icon": "⚠️",  "color": "#E5854A", "action": "Gửi win-back campaign, ưu đãi giảm giá mạnh để kéo lại."},
+    "Inactive / Churned":   {"icon": "💤",  "color": "#E24B4A", "action": "Thử re-engagement email lần cuối, sau đó archive."},
+    "Potential Loyalists":  {"icon": "🌱",  "color": "#4CAF80", "action": "Mời tham gia loyalty program, tặng điểm double kỳ tới."},
+    "Champions / VIPs":     {"icon": "👑",  "color": "#F5C842", "action": "Ưu tiên early access, tặng quà VIP, upsell gói premium."},
+    "Occasional Buyers":    {"icon": "🛍️",  "color": "#7C6AF5", "action": "Gửi newsletter sản phẩm phù hợp, khuyến mãi theo mùa."},
+}
+
+BAR_COLORS = ["#7C6AF5", "#4CAF80", "#F5C842", "#E5854A", "#E24B4A"]
+
+
+def compute_rfmt(txn_df: pd.DataFrame, analysis_date: pd.Timestamp):
+    """Tính R, F, M, T từ bảng giao dịch thô."""
+    df = txn_df.copy()
+    df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"])
+    df["LineTotal"]   = df["Quantity"] * df["Price"]
+    df = df[df["LineTotal"] > 0]
+
+    recency   = (analysis_date - df["InvoiceDate"].max()).days
+    frequency = df["Invoice"].nunique()
+    monetary  = df["LineTotal"].sum()
+
+    dates = df.groupby("Invoice")["InvoiceDate"].min().sort_values()
+    if len(dates) > 1:
+        gaps = [(dates.iloc[i+1] - dates.iloc[i]).days for i in range(len(dates)-1)]
+        t_val = float(np.mean(gaps))
+    else:
+        t_val = float(recency)
+
+    return recency, frequency, monetary, t_val
+
+
+def predict(recency, frequency, monetary, t_val):
+    """Scale → KMeans cluster → XGB proba."""
+    X_rfmt   = pd.DataFrame([[recency, frequency, monetary, t_val]],
+                            columns=["Recency","Frequency","Monetary","T"])
+    scaled   = SCALER.transform(X_rfmt)
+    cluster  = int(KMEANS.predict(scaled)[0])
+    seg_name = CLUSTER_LBLS.get(cluster, f"Cluster {cluster}")
+
+    clf = CLASSIFIERS.get(cluster)
+    if clf:
+        X_cls = np.array([[recency, frequency, monetary]])
+        will_return_proba = float(clf.predict_proba(X_cls)[0][1])
+    else:
+        will_return_proba = None
+
+    return cluster, seg_name, will_return_proba
+
+
+# ─────────────────────────────────────────────
+# SIDEBAR — INPUT
+# ─────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("""
+        <div style='display:flex;align-items:center;gap:10px;padding-bottom:14px;
+                    border-bottom:1px solid #2A2835;margin-bottom:16px;'>
+            <span style='font-size:22px;'>🎯</span>
+            <div>
+                <div style='font-size:14px;font-weight:600;color:#E8E6F0;'>Customer Segmentation</div>
+                <div style='font-size:10px;color:#6B6880;font-family:DM Mono;'>KMeans + XGBoost</div>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<div class="section-title">Thông tin khách hàng</div>', unsafe_allow_html=True)
+    customer_id = st.text_input("Customer ID", value="13085", label_visibility="collapsed",
+                                placeholder="Customer ID")
+    country     = st.text_input("Country", value="United Kingdom", label_visibility="collapsed",
+                                placeholder="Country")
+
+    st.markdown('<div class="section-title">Lịch sử giao dịch</div>', unsafe_allow_html=True)
+    st.caption("Nhập từng dòng giao dịch — Invoice, Date (DD.MM.YYYY HH:MM), Qty, Price")
+
+    # Default transactions
+    if "txn_data" not in st.session_state:
+        st.session_state.txn_data = pd.DataFrame([
+            {"Invoice": "489434", "InvoiceDate": "01.12.2009 07:45", "Quantity": 12, "Price": 6.95},
+            {"Invoice": "489435", "InvoiceDate": "15.12.2009 09:30", "Quantity": 6,  "Price": 12.50},
+            {"Invoice": "491203", "InvoiceDate": "03.01.2010 11:15", "Quantity": 4,  "Price": 8.75},
+            {"Invoice": "493012", "InvoiceDate": "22.01.2010 14:00", "Quantity": 10, "Price": 5.40},
+        ])
+
+    edited_df = st.data_editor(
+        st.session_state.txn_data,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "Invoice":     st.column_config.TextColumn("Invoice", width="small"),
+            "InvoiceDate": st.column_config.TextColumn("Date", width="medium"),
+            "Quantity":    st.column_config.NumberColumn("Qty", min_value=1, width="small"),
+            "Price":       st.column_config.NumberColumn("Price", min_value=0.01, format="%.2f", width="small"),
+        },
+        hide_index=True,
+        key="txn_editor",
+    )
+    st.session_state.txn_data = edited_df
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    run_btn   = st.button("🔍  Tính RFMT & Phân loại", use_container_width=True)
+    reset_btn = st.button("↺  Nhập lại", use_container_width=True)
+
+    if reset_btn:
+        st.session_state.txn_data = pd.DataFrame(
+            columns=["Invoice","InvoiceDate","Quantity","Price"]
+        )
+        if "result" in st.session_state:
+            del st.session_state["result"]
+        st.rerun()
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown(f"""
+        <div style='font-size:10px;color:#3D3A50;font-family:DM Mono;line-height:1.8;'>
+            analysis_date<br>{ANALYSIS_DT.strftime('%d %b %Y')}<br>
+            k = {int(model['optimal_k'])} clusters
+        </div>
+    """, unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────────────
+# MAIN PANEL
+# ─────────────────────────────────────────────
+st.markdown("""
+    <h1 style='font-size:22px;font-weight:600;color:#E8E6F0;margin:0 0 4px;'>
+        Customer Segmentation & Repurchase Prediction
+    </h1>
+    <p style='font-size:13px;color:#6B6880;margin:0 0 20px;'>
+        Nhập giao dịch thô → tính RFMT tự động → phân cụm → dự đoán khả năng quay lại
+    </p>
+""", unsafe_allow_html=True)
+
+# ── PIPELINE STATUS ──────────────────────────────────────────────
+has_result = "result" in st.session_state
+
+def pip_dot(label, num, state):
+    cls = {"done":"pip-done","active":"pip-active","idle":"pip-idle"}[state]
+    return f"""
+    <div class="pip-step">
+        <div class="pip-dot {cls}">{num}</div>
+        <div class="pip-lbl">{label}</div>
+    </div>"""
+
+def pip_line(done=False):
+    cls = "pip-line-done" if done else ""
+    return f'<div class="pip-line {cls}"></div>'
+
+if not has_result:
+    s = ["active","idle","idle","idle","idle","idle"]
 else:
-    st.sidebar.error("❌ Lỗi tải mô hình. Vui lòng kiểm tra lại file .pkl trong thư mục.")
+    s = ["done","done","done","done","done","done"]
 
-# ==========================================
-# 3. THUẬT TOÁN XỬ LÝ THÍCH ỨNG 3 BIẾN CHO XGBOOST
-# ==========================================
-def predict_xgboost_smart(xgb_model, rfmt_df, scaled_rfmt, cluster_ids):
-    """
-    Hàm xử lý thông minh thích ứng số lượng biến đầu vào cho XGBoost:
-    Nhận diện chính xác mô hình mới yêu cầu 3 features (Recency, Frequency, Monetary).
-    """
-    try:
-        expected_features = xgb_model.n_features_in_
-    except AttributeError:
+st.markdown(f"""
+<div class="pipeline">
+    {pip_dot("Nhập<br>giao dịch", "1", s[0])}
+    {pip_line(s[1]=="done")}
+    {pip_dot("Tính<br>RFMT", "2", s[1])}
+    {pip_line(s[2]=="done")}
+    {pip_dot("Scale<br>features", "3", s[2])}
+    {pip_line(s[3]=="done")}
+    {pip_dot("KMeans<br>cluster", "4", s[3])}
+    {pip_line(s[4]=="done")}
+    {pip_dot("XGBoost<br>score", "5", s[4])}
+    {pip_line(s[5]=="done")}
+    {pip_dot("Kết quả<br>& gợi ý", "6", s[5])}
+</div>
+""", unsafe_allow_html=True)
+
+
+# ── RUN PREDICTION ───────────────────────────────────────────────
+if run_btn:
+    df = edited_df.copy()
+    if df.empty or len(df) == 0:
+        st.warning("Vui lòng nhập ít nhất 1 giao dịch.")
+    else:
         try:
-            expected_features = len(xgb_model.get_booster().feature_names)
-        except:
-            expected_features = 3 # Định dạng mặc định theo file pkl mới của bạn
-            
-    if expected_features == 3:
-        # Lấy 3 cột đầu tiên của dữ liệu đã chuẩn hóa (tương ứng với Recency, Frequency, Monetary)
-        return xgb_model.predict(scaled_rfmt[:, :3])
-    elif expected_features == 4:
-        return xgb_model.predict(scaled_rfmt)
-    elif expected_features == 5:
-        input_5 = np.column_stack((scaled_rfmt, cluster_ids))
-        return xgb_model.predict(input_5)
-    else:
-        # Xử lý trường hợp mô hình một-hot nâng cao (10 biến)
-        try: expected_cols = xgb_model.feature_names_in_
-        except: expected_cols = xgb_model.get_booster().feature_names
-        
-        df_xgb = pd.DataFrame(0, index=np.arange(len(rfmt_df)), columns=expected_cols)
-        for i, col in enumerate(['Recency', 'Frequency', 'Monetary', 'T']):
-            if col in df_xgb.columns: df_xgb[col] = scaled_rfmt[:, i]
-        for i, cid in enumerate(cluster_ids):
-            cluster_col = f'Cluster_{cid}'
-            if cluster_col in df_xgb.columns: df_xgb.loc[i, cluster_col] = 1
-        return xgb_model.predict(df_xgb)
+            df["Quantity"] = pd.to_numeric(df["Quantity"], errors="coerce").fillna(0)
+            df["Price"]    = pd.to_numeric(df["Price"],    errors="coerce").fillna(0)
+            df = df[(df["Quantity"] > 0) & (df["Price"] > 0)]
 
-# ==========================================
-# 4. TIẾP NHẬN FILE DỮ LIỆU TỪ SIDEBAR
-# ==========================================
-st.sidebar.subheader("📂 Nạp Cơ sở dữ liệu")
-st.sidebar.write("Tải lên tệp lịch sử hóa đơn bán hàng định dạng `.csv`.")
-db_file = st.sidebar.file_uploader("Chọn file dữ liệu giao dịch thô", type=["csv"])
+            r, f, m, t = compute_rfmt(df, ANALYSIS_DT)
+            cluster, seg_name, will_return = predict(r, f, m, t)
 
-if db_file is not None:
-    db_df = pd.read_csv(db_file)
-    
-    # --- THUẬT TOÁN TỰ ĐỘNG DÒ TÊN CỘT THÔNG MINH (CHỐNG LỖI KEYERROR) ---
-    id_col, date_col, amount_col = None, None, None
-    for col in db_df.columns:
-        col_lower = col.lower().replace("_", "").replace(" ", "")
-        if col_lower in ['customerid', 'customer_id', 'id', 'makhachhang', 'makh']: id_col = col
-        elif col_lower in ['invoicedate', 'invoice_date', 'date', 'ngay', 'ngayhoadon']: date_col = col
-        elif col_lower in ['totalamount', 'amount', 'price', 'revenue', 'sales', 'total', 'sotien']: amount_col = col
+            # Gather all cluster probas for display
+            all_probas = {}
+            for cid, clf in CLASSIFIERS.items():
+                p = float(clf.predict_proba(np.array([[r, f, m]]))[0][1])
+                all_probas[CLUSTER_LBLS[cid]] = p
 
-    # Trường hợp file có Quantity và UnitPrice thay vì tính sẵn Total_Amount
-    if amount_col is None and 'Quantity' in db_df.columns and 'UnitPrice' in db_df.columns:
-        db_df['Total_Amount'] = db_df['Quantity'] * db_df['UnitPrice']
-        amount_col = 'Total_Amount'
+            st.session_state["result"] = {
+                "r": r, "f": f, "m": m, "t": t,
+                "cluster": cluster, "seg_name": seg_name,
+                "will_return": will_return,
+                "all_probas": all_probas,
+                "customer_id": customer_id, "country": country,
+            }
+            st.rerun()
+        except Exception as e:
+            st.error(f"Lỗi khi xử lý: {e}")
 
-    # Kiểm tra tính hợp lệ của dữ liệu đầu vào
-    if None in [id_col, date_col, amount_col]:
-        st.error("❌ Định dạng file CSV không tương thích! Đảm bảo file có chứa các thông tin định danh: Mã khách hàng, Ngày giao dịch, và Số tiền hóa đơn.")
-    else:
-        # Chuẩn hóa định dạng thời gian
-        db_df[date_col] = pd.to_datetime(db_df[date_col])
-        max_date_db = db_df[date_col].max()
-        
-        # Chia các phân khu tính năng bằng Tab trực quan
-        tab1, tab2 = st.tabs(["🔍 Tra cứu Khách hàng (CRM)", "📊 Quét hệ thống hàng loạt"])
-        
-        # ------------------------------------------
-        # TAB 1: GIAO DIỆN TRA CỨU CHI TIẾT TỪNG ID
-        # ------------------------------------------
-        with tab1:
-            st.subheader("Hồ sơ Hành vi & Dự báo Đơn lẻ")
-            search_id = st.text_input("👤 Nhập Mã số Khách hàng (CustomerID) cần kiểm tra:", placeholder="Ví dụ: 17850, 13047...")
-            
-            if search_id:
-                # Xử lý đồng bộ kiểu dữ liệu cho mã khách hàng
-                if db_df[id_col].dtype in ['int64', 'float64']:
-                    try: search_id_clean = float(search_id)
-                    except ValueError: search_id_clean = search_id
-                else:
-                    search_id_clean = str(search_id)
-                
-                user_history = db_df[db_df[id_col] == search_id_clean]
-                
-                if user_history.empty:
-                    st.warning(f"⚠️ Không tìm thấy bất kỳ giao dịch nào tương ứng với mã khách hàng '{search_id}' trong hệ thống.")
-                else:
-                    st.success(f"🎉 Kết nối hồ sơ khách hàng {search_id} thành công!")
-                    
-                    # Tính toán dữ liệu RFMT thực tế của khách hàng
-                    user_max_date = user_history[date_col].max()
-                    user_min_date = user_history[date_col].min()
-                    
-                    r_val = (max_date_db - user_max_date).days
-                    f_val = len(user_history)
-                    m_val = user_history[amount_col].sum()
-                    t_val = (user_max_date - user_min_date).days
-                    
-                    # Hiển thị các chỉ số cốt lõi dưới dạng các thẻ Metric lớn giống như dashboard chuyên nghiệp
-                    m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-                    m_col1.metric("Recency (R - Gần nhất)", f"{r_val} ngày")
-                    m_col2.metric("Frequency (F - Tần suất)", f"{f_val} lần")
-                    m_col3.metric("Monetary (M - Giá trị)", f"£{m_val:,.2f}")
-                    m_col4.metric("Time T (T - Vòng đời)", f"{t_val} ngày")
-                    
-                    # Dự báo thông qua bộ ba AI
-                    if None not in [scaler, kmeans, prediction_model]:
-                        rfmt_single = pd.DataFrame([[r_val, f_val, m_val, t_val]], columns=['Recency', 'Frequency', 'Monetary', 'T'])
-                        scaled_single = scaler.transform(rfmt_single)
-                        cluster_single = kmeans.predict(scaled_single)
-                        
-                        pred_single = predict_xgboost_smart(prediction_model, rfmt_single, scaled_single, cluster_single)[0]
-                        
-                        st.write("---")
-                        st.subheader("🔮 Kết quả Đánh giá Phân tích từ AI")
-                        res_col1, res_col2 = st.columns(2)
-                        
-                        res_col1.info(f"🏷️ **Phân khúc Thị trường:** Khách hàng thuộc nhóm **[Cluster {cluster_single[0]}]**")
-                        if pred_single == 1:
-                            res_col2.success("🔮 **Dự báo mô hình (30 ngày tới):** KHÁCH HÀNG SẼ QUAY LẠI MUA HÀNG (Will Return) 🎉")
-                        else:
-                            res_col2.error("🚨 **Dự báo mô hình (30 ngày tới):** NGUY CƠ RỜI BỎ HỆ THỐNG (Churn Risk) 📉")
-                    
-                    # Bảng lịch sử mua hàng chi tiết nằm ở dưới cùng
-                    st.write("---")
-                    st.subheader("🛒 Chi tiết Nhật ký Giao dịch")
-                    st.dataframe(user_history.sort_values(by=date_col, ascending=False), use_container_width=True)
-                    
-        # ------------------------------------------
-        # TAB 2: GIAO DIỆN XỬ LÝ QUÉT TOÀN BỘ FILE DB
-        # ------------------------------------------
-        with tab2:
-            st.subheader("Phân tích tự động danh sách toàn bộ Cơ sở dữ liệu")
-            st.write("Hệ thống sẽ quét qua toàn bộ danh sách hóa đơn, tự gom nhóm từng khách hàng, tính toán chỉ số hành vi và dự báo tự động.")
-            
-            if st.button("🚀 Kích hoạt tiến trình quét hàng loạt", type="primary"):
-                with st.spinner("Hệ thống AI đang xử lý tính toán cấu trúc dữ liệu hành vi toàn cục..."):
-                    try:
-                        # 1. Gom nhóm tự động tính toán nhanh RFMT loại bỏ multi-index xung đột gán cột
-                        rfmt_all = db_df.groupby(id_col).agg(
-                            Recency=(date_col, lambda x: (max_date_db - x.max()).days),
-                            Frequency=(date_col, 'count'),
-                            Monetary=(amount_col, 'sum'),
-                            T=(date_col, lambda x: (x.max() - x.min()).days)
-                        )
-                        
-                        final_output = rfmt_all.copy().reset_index()
-                        features = rfmt_all[['Recency', 'Frequency', 'Monetary', 'T']]
-                        
-                        # 2. Xử lý chuẩn hóa và gán phân cụm nhóm
-                        features_scaled = scaler.transform(features)
-                        final_output['Cluster_ID'] = kmeans.predict(features_scaled)
-                        
-                        # 3. Sử dụng mô hình XGBoost thích ứng dự báo kết quả đầu ra
-                        all_predictions = predict_xgboost_smart(prediction_model, rfmt_all, features_scaled, final_output['Cluster_ID'].values)
-                        final_output['Dự_Báo_Hành_Vi'] = np.where(all_predictions == 1, 'Sẽ tái mua (Will Return)', 'Nguy cơ rời bỏ (Churn)')
-                        
-                        st.success("🎉 Tiến trình xử lý hoàn tất! Kết quả phân khúc tổng hợp:")
-                        st.dataframe(final_output, use_container_width=True)
-                        
-                        # Cung cấp nút tải tệp báo cáo hoàn chỉnh cho người dùng
-                        st.download_button(
-                            label="📥 Tải Xuất File Báo Cáo Phân Tích CRM (CSV)", 
-                            data=final_output.to_csv(index=False).encode('utf-8'), 
-                            file_name="crm_customer_analytics_report.csv", 
-                            mime="text/csv"
-                        )
-                    except Exception as err:
-                        st.error(f"❌ Có lỗi bất ngờ phát sinh trong quá trình tính toán hàng loạt: {err}")
+
+# ── DISPLAY RESULTS ──────────────────────────────────────────────
+if has_result:
+    res = st.session_state["result"]
+    r, f, m, t   = res["r"], res["f"], res["m"], res["t"]
+    seg_name     = res["seg_name"]
+    will_return  = res["will_return"]
+    meta         = SEG_META.get(seg_name, {"icon":"❓","color":"#7C6AF5","action":"Không có gợi ý."})
+
+    # ── RFMT Cards ────────────────────────────────
+    st.markdown('<div class="section-title">Chỉ số RFMT được tính tự động</div>', unsafe_allow_html=True)
+
+    rfmt_items = [
+        ("R", "Recency",  f"{int(r)}",      "ngày",  "#7C6AF5"),
+        ("F", "Frequency",f"{int(f)}",      "đơn",   "#4CAF80"),
+        ("M", "Monetary", f"{m:,.0f}",      "đ",     "#F5C842"),
+        ("T", "Avg interval", f"{t:.1f}",   "ngày/đơn","#E5854A"),
+    ]
+
+    cols = st.columns(4)
+    for col, (letter, name, val, unit, accent) in zip(cols, rfmt_items):
+        with col:
+            st.markdown(f"""
+            <div class="rfmt-card" style="--accent:{accent}">
+                <div class="rfmt-letter">{letter}</div>
+                <div class="rfmt-name">{name}</div>
+                <div class="rfmt-value">{val}<span class="rfmt-unit">{unit}</span></div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Two columns: Segment banner + Will Return ──
+    col_l, col_r = st.columns([3, 2])
+
+    with col_l:
+        st.markdown('<div class="section-title">Segment</div>', unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="seg-banner" style="--seg-color:{meta['color']}">
+            <div class="seg-icon">{meta['icon']}</div>
+            <div>
+                <div class="seg-label">Cluster #{res['cluster']} · {int(model['optimal_k'])} clusters</div>
+                <div class="seg-name">{seg_name}</div>
+                <div class="seg-meta">Customer {res['customer_id']} · {res['country']}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col_r:
+        st.markdown('<div class="section-title">Khả năng quay lại</div>', unsafe_allow_html=True)
+        if will_return is not None:
+            pct = will_return * 100
+            color = "#4CAF80" if pct >= 60 else "#E5854A" if pct >= 35 else "#E24B4A"
+            fig = go.Figure(go.Indicator(
+                mode  = "gauge+number",
+                value = pct,
+                number= {"suffix": "%", "font": {"size": 32, "color": "#E8E6F0",
+                                                  "family": "DM Mono"}},
+                gauge = {
+                    "axis"     : {"range": [0, 100], "tickfont": {"color": "#6B6880", "size": 10}},
+                    "bar"      : {"color": color, "thickness": 0.22},
+                    "bgcolor"  : "#1A1925",
+                    "borderwidth": 0,
+                    "steps"    : [
+                        {"range": [0,  35], "color": "#1F1E28"},
+                        {"range": [35, 60], "color": "#201E2A"},
+                        {"range": [60,100], "color": "#1E2026"},
+                    ],
+                    "threshold": {"line": {"color": color, "width": 2},
+                                  "thickness": 0.8, "value": pct},
+                },
+            ))
+            fig.update_layout(
+                height=180, margin=dict(t=20, b=10, l=20, r=20),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font_color="#E8E6F0",
+            )
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        else:
+            st.info("Cluster này không đủ dữ liệu để dự đoán will_return.")
+
+    # ── Proba bars per cluster ─────────────────────
+    if res["all_probas"]:
+        st.markdown('<div class="section-title">Will_Return theo từng cluster</div>', unsafe_allow_html=True)
+        sorted_probas = sorted(res["all_probas"].items(), key=lambda x: x[1], reverse=True)
+        html_bars = ""
+        for i, (lbl, prob) in enumerate(sorted_probas):
+            pct   = prob * 100
+            clr   = BAR_COLORS[i % len(BAR_COLORS)]
+            is_current = "★ " if lbl == seg_name else ""
+            html_bars += f"""
+            <div class="proba-row">
+                <div class="proba-label">{is_current}{lbl}</div>
+                <div class="proba-bar">
+                    <div class="proba-fill" style="width:{pct:.1f}%;background:{clr};"></div>
+                </div>
+                <div class="proba-pct">{pct:.1f}%</div>
+            </div>"""
+        st.markdown(html_bars, unsafe_allow_html=True)
+
+    # ── Recommendation ────────────────────────────
+    st.markdown(f"""
+    <div class="section-title">Gợi ý hành động</div>
+    <div class="rec-box">
+        <strong>{meta['icon']} {seg_name}</strong> — {meta['action']}
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Debug expander ────────────────────────────
+    with st.expander("🔧 Chi tiết kỹ thuật"):
+        st.markdown(f"""
+        <div style='font-family:DM Mono;font-size:11px;color:#6B6880;line-height:2;'>
+            Cluster ID     : {res['cluster']}<br>
+            Scaled features: R={r:.1f} F={f:.1f} M={m:.1f} T={t:.1f}<br>
+            Analysis date  : {ANALYSIS_DT.strftime('%Y-%m-%d')}<br>
+            Classifier     : XGBClassifier (binary:logistic)<br>
+            Features used  : Recency, Frequency, Monetary_Past
+        </div>
+        """, unsafe_allow_html=True)
+
 else:
-    st.info("👈 **Chào mừng bạn đến với hệ thống phân tích CRM! Vui lòng tải lên file dữ liệu giao dịch (.csv) từ bảng điều khiển bên trái để kích hoạt mô hình dự báo AI.**")
+    # ── Empty state ───────────────────────────────
+    st.markdown("""
+    <div style='text-align:center;padding:60px 20px;'>
+        <div style='font-size:48px;margin-bottom:16px;'>📊</div>
+        <div style='font-size:16px;font-weight:500;color:#6B6880;'>
+            Nhập giao dịch bên trái và nhấn <strong style="color:#7C6AF5;">Tính RFMT & Phân loại</strong>
+        </div>
+        <div style='font-size:12px;color:#3D3A50;margin-top:8px;'>
+            App sẽ tự động tính R, F, M, T → phân cụm KMeans → dự đoán khả năng quay lại
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
