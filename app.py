@@ -368,23 +368,6 @@ st.markdown("""
 # ── PIPELINE STATUS ──────────────────────────────────────────────
 has_result = "result" in st.session_state
 
-def pip_dot(label, num, state):
-    cls = {"done":"pip-done","active":"pip-active","idle":"pip-idle"}[state]
-    return f"""
-    <div class="pip-step">
-        <div class="pip-dot {cls}">{num}</div>
-        <div class="pip-lbl">{label}</div>
-    </div>"""
-
-def pip_line(done=False):
-    cls = "pip-line-done" if done else ""
-    return f'<div class="pip-line {cls}"></div>'
-
-if not has_result:
-    s = ["active","idle","idle","idle","idle","idle"]
-else:
-    s = ["done","done","done","done","done","done"]
-
 st.markdown(f"""
 <div class="pipeline">
     {pip_dot("Nhập<br>giao dịch", "1", s[0])}
