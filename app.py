@@ -1,9 +1,3 @@
-"""
-app.py — Customer Segmentation & Repurchase Prediction
-Chạy: streamlit run app.py
-Yêu cầu: pip install streamlit pandas numpy scikit-learn xgboost plotly
-"""
-
 import warnings
 warnings.filterwarnings("ignore")
 
