@@ -14,7 +14,7 @@ st.write("---")
 # ==========================================
 # 2. TẢI VÀ BÓC TÁCH FILE .PKL
 # ==========================================
-MODEL_PATH = "src/hybrid_customer_segmentation_prediction_model.pkl"
+MODEL_PATH = "src/hybrid_customer_segmentation_prediction_model (1).pkl"
 
 @st.cache_resource
 def load_models():
