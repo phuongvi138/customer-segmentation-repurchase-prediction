@@ -17,3 +17,5 @@ yellowbrick>=1.5         # Elbow / Silhouette visualisers (optional but recommen
 # Jupyter (optional, for running the notebook)
 jupyterlab>=3.0
 ipython>=8.0
+streamlit
+plotly
