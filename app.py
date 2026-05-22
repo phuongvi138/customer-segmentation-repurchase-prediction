@@ -3,142 +3,141 @@ import pandas as pd
 import numpy as np
 import joblib
 import plotly.express as px
+from datetime import datetime
 
-# 1. CẤU HÌNH GIAO DIỆN WEB DOCK
-st.set_page_config(
-    page_title="E-Commerce Customer Analytics Dashboard",
-    page_icon="🛍️",
-    layout="wide"
-)
+# 1. CẤU HÌNH GIAO DIỆN
+st.set_page_config(page_title="E-Commerce Customer Analytics Dashboard", page_icon="🛍️", layout="wide")
 
-# Giao diện Tiêu đề (Khớp với nghiên cứu của bạn)
 st.title("🛍️ Dual-Stage Customer Segmentation & Repurchase Prediction Framework")
 st.markdown("""
-Ứng dụng này triển khai mô hình **Hybrid Customer Segmentation & Prediction** được đề xuất trong bài báo nghiên cứu. 
-Hệ thống tự động sử dụng bộ tính năng **RFMT** để nhận diện hành vi khách hàng và dự báo khả năng quay lại tái mua hàng (*Will Return*).
+Ứng dụng này tự động tiếp nhận **Dữ liệu giao dịch thô (Raw Data)**, tính toán bộ chỉ số **RFMT**, 
+thực hiện phân cụm khách hàng và dự báo xác suất quay lại tái mua hàng trong 30 ngày tới.
 """)
 st.write("---")
 
-# 2. ĐƯỜNG DẪN ĐẾN FILE MODEL TRÊN GITHUB 
+# 2. TẢI FILE `.PKL` VÀ TỰ ĐỘNG BÓC TÁCH CÁC THÀNH PHẦN
 MODEL_PATH = "src/hybrid_customer_segmentation_prediction_model.pkl"
 
 @st.cache_resource
-def load_hybrid_model():
+def load_all_components():
     try:
-        # Tải mô hình đã đóng gói bằng joblib
-        model = joblib.load(MODEL_PATH)
-        return model
+        pkl_obj = joblib.load(MODEL_PATH)
+        return pkl_obj
     except Exception as e:
-        st.error(f"⚠️ Không thể tải file model tại đường dẫn '{MODEL_PATH}'. Lỗi chi tiết: {e}")
+        st.error(f"⚠️ Không thể tải file model tại '{MODEL_PATH}': {e}")
         return None
 
-model = load_hybrid_model()
+pkl_obj = load_all_components()
 
-# 3. CHIA TAB CHỨC NĂNG TRÊN GIAO DIỆN
-tab1, tab2 = st.tabs(["🎯 Dự báo cho 1 Khách hàng", "📊 Xử lý hàng loạt (File CSV)"])
+# Khởi tạo các biến mô hình trống
+scaler, kmeans, prediction_model = None, None, None
 
-# --- TAB 1: DỰ BÁO CHO MỘT KHÁCH HÀNG ---
+if pkl_obj is not None and isinstance(pkl_obj, dict):
+    st.sidebar.success("✅ Đã kết nối thành công với bộ mô hành Hybrid!")
+    # Tự động dò tìm các thành phần dựa trên các key phổ biến bạn cùng nhóm có thể đặt
+    scaler = pkl_obj.get('scaler') or pkl_obj.get('standard_scaler')
+    kmeans = pkl_obj.get('kmeans') or pkl_obj.get('clustering_model') or pkl_obj.get('cluster')
+    prediction_model = pkl_obj.get('model') or pkl_obj.get('xgb') or pkl_obj.get('xgboost') or pkl_obj.get('classifier')
+
+# --- CHIA TAB GIAO DIỆN ---
+tab1, tab2 = st.tabs(["🎯 Dự báo nhanh cho 1 Khách hàng", "📊 Tải File Giao Dịch Thô (Raw Data) & Chạy Hàng Loạt"])
+
+# TAB 1: DỰ BÁO NHANH QUA THANH TRƯỢT (Nếu đã biết sẵn RFMT)
 with tab1:
-    st.header("Dự báo xu hướng tái mua hàng (Single Customer)")
-    st.write("Điều chỉnh các chỉ số RFMT bên dưới để kiểm tra khả năng quay lại mua hàng của khách hàng.")
-
-    # Tạo 4 cột để nhập các biến đầu vào bằng thanh trượt (Slider)
+    st.header("Dự báo nhanh dựa trên chỉ số RFMT")
     col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        recency = st.slider("Recency (Số ngày kể từ lần mua cuối cùng)", min_value=0, max_value=365, value=30, step=1)
-    with col2:
-        frequency = st.slider("Frequency (Tổng số đơn hàng đã mua)", min_value=1, max_value=100, value=5, step=1)
-    with col3:
-        monetary = st.number_input("Monetary Value (Tổng số tiền đã chi tiêu £)", min_value=0.0, max_value=100000.0, value=250.0, step=10.0)
-    with col4:
-        time_t = st.slider("Time T (Nhịp điệu mua sắm - số ngày cách nhau giữa các đơn)", min_value=0, max_value=180, value=15, step=1)
+    with col1: r_val = st.slider("Recency (Ngày)", 0, 365, 30)
+    with col2: f_val = st.slider("Frequency (Số đơn)", 1, 100, 5)
+    with col3: m_val = st.number_input("Monetary (£)", min_value=0.0, value=250.0)
+    with col4: t_val = st.slider("Time T (Nhịp điệu - Ngày)", 0, 180, 15)
 
-    # Nút bấm kích hoạt dự báo
-    if st.button("Phân tích khách hàng", type="primary"):
-        if model is not None:
-            # Tạo DataFrame từ các biến đầu vào theo đúng cấu trúc dữ liệu huấn luyện
-            input_df = pd.DataFrame([[recency, frequency, monetary, time_t]], columns=['R', 'F', 'M', 'T'])
-            
-            try:
-                # Thực hiện dự báo nhãn lớp (0 hoặc 1)
-                prediction = model.predict(input_df)[0]
-                
-                # Thực hiện dự báo xác suất (nếu mô hình hỗ trợ predict_proba)
-                try:
-                    prob = model.predict_proba(input_df)[0][1]
-                except:
-                    # Phương án dự phòng nếu mô hình là dạng Hard-voting/không hỗ trợ xác suất
-                    prob = 1.0 if prediction == 1 else 0.0
-
-                # HIỂN THỊ KẾT QUẢ TRỰC QUAN
-                st.write("---")
-                res_col1, res_col2 = st.columns(2)
-                
-                with res_col1:
-                    st.metric(label="Trạng thái xử lý", value="Thành công (Success)")
-                    st.write("Mô hình Hybrid tích hợp kỹ thuật cân bằng dữ liệu **SMOTE-Tomek** đã chấm điểm hồ sơ hành vi này.")
-                    
-                with res_col2:
-                    if prediction == 1 or prob >= 0.5:
-                        st.success(f"🔮 **DỰ BÁO: KHÁCH HÀNG SẼ QUAY LẠI (Will Return)** \n\nXác suất tái mua hàng: {prob*100:.2f}%")
-                        st.balloons()
-                    else:
-                        st.error(f"🚨 **DỰ BÁO: NGUY CƠ RỜI BỎ / KHÔNG QUAY LẠI (Not Return)** \n\nXác suất rời đi: {(1-prob)*100:.2f}%")
-                        st.warning("Khuyến nghị quản trị: Kích hoạt ngay chiến dịch Marketing cá nhân hóa và mã giảm giá giữ chân khách hàng.")
-            
-            except Exception as e:
-                st.error(f"❌ Lỗi khi thực hiện dự báo: {e}")
-                st.info("💡 Lưu ý: Hãy đảm bảo file .pkl của bạn nhận đầu vào trực tiếp là 4 biến ['R', 'F', 'M', 'T'].")
+    if st.button("Chạy dự báo nhanh"):
+        if None in [scaler, kmeans, prediction_model]:
+            st.error("⚠️ File .pkl thiếu thành phần hoặc chưa bóc tách đúng khóa. Vui lòng kiểm tra cấu trúc file.")
         else:
-            st.warning("Hệ thống chưa thể dự báo do thiếu file mô hình `.pkl`.")
+            input_data = pd.DataFrame([[r_val, f_val, m_val, t_val]], columns=['R', 'F', 'M', 'T'])
+            scaled_data = scaler.transform(input_data)
+            cluster_id = kmeans.predict(scaled_data)[0]
+            
+            # Giả sử mô hình phân loại nhận vào dữ liệu đã scale
+            pred = prediction_model.predict(scaled_data)[0]
+            
+            st.write("---")
+            c1, c2 = st.columns(2)
+            c1.metric("Phân cụm khách hàng (Cluster ID)", f"Cluster {cluster_id}")
+            if pred == 1:
+                c2.success("🔮 Kết quả: SẼ QUAY LẠI TRONG 30 NGÀY TỚI")
+            else:
+                c2.error("🚨 Kết quả: KHÔNG QUAY LẠI (Nguy cơ rời bỏ)")
 
-# --- TAB 2: XỬ LÝ HÀNG LOẠT QUA FILE CSV ---
+# TAB 2: XỬ LÝ ĐÚNG LUỒNG LOGIC BÀI BÁO (NHẬN FILE RAW DATA)
 with tab2:
-    st.header("Xử lý dữ liệu quy mô lớn (Batch Processing)")
-    st.write("Tải lên file CSV chứa danh sách nhiều khách hàng (có sẵn các cột `R`, `F`, `M`, `T`) để chạy dự báo hàng loạt.")
+    st.header("Xử lý Luồng dữ liệu giao dịch thô (Raw Transaction Data)")
+    st.markdown("""
+    **Yêu cầu cấu trúc file CSV tải lên phải có tối thiểu các cột sau:**
+    * `CustomerID`: Mã định danh khách hàng.
+    * `InvoiceDate`: Ngày thực hiện giao dịch (Định dạng: YYYY-MM-DD hoặc DD-MM-YYYY).
+    * `Total_Amount`: Số tiền của đơn hàng đó (hoặc cột tính tổng bằng `Quantity * UnitPrice`).
+    """)
 
-    uploaded_file = st.file_uploader("Chọn file dữ liệu RFMT mẫu (.csv)", type=["csv"])
+    uploaded_file = st.file_uploader("Tải lên file Giao dịch thô (.csv)", type=["csv"])
     
     if uploaded_file is not None:
-        data = pd.read_csv(uploaded_file)
+        raw_df = pd.read_csv(uploaded_file)
+        st.write("📊 Bản xem trước dữ liệu thô vừa tải lên:")
+        st.dataframe(raw_df.head(5), use_container_width=True)
         
-        # Kiểm tra xem file CSV tải lên có đủ các cột R, F, M, T hay không
-        required_cols = {'R', 'F', 'M', 'T'}
-        if not required_cols.issubset(data.columns):
-            st.error("❌ Cấu trúc file không hợp lệ! File CSV bắt buộc phải chứa đủ 4 cột tiêu đề: R, F, M, T")
+        # Kiểm tra cột bắt buộc
+        required = {'CustomerID', 'InvoiceDate', 'Total_Amount'}
+        if not required.issubset(raw_df.columns):
+            st.error("❌ File thiếu các cột bắt buộc: CustomerID, InvoiceDate, Total_Amount")
+        elif None in [scaler, kmeans, prediction_model]:
+            st.error("❌ Hệ thống chưa bóc tách được đủ 3 thành phần (Scaler, K-Means, XGBoost) từ file .pkl để chạy.")
         else:
-            st.success("✅ File được tải lên thành công!")
-            
-            if model is not None:
+            with st.spinner("⏳ Hệ thống đang tự động tính toán chỉ số RFMT và chạy mô hình Hybrid..."):
                 try:
-                    # Trích xuất các biến đặc trưng
-                    features = data[['R', 'F', 'M', 'T']]
+                    # --- BƯỚC 1: TỰ ĐỘNG TÍNH TOÁN R, F, M, T (FEATURE ENGINEERING) ---
+                    raw_df['InvoiceDate'] = pd.to_datetime(raw_df['InvoiceDate'])
+                    max_date = raw_df['InvoiceDate'].max()
                     
-                    # Dự báo hàng loạt cho toàn bộ file
-                    data['Prediction_Label'] = model.predict(features)
-                    data['Status'] = np.where(data['Prediction_Label'] == 1, 'Will Return', 'Not Return')
+                    # Tính toán R, F, M
+                    rfmt_df = raw_df.groupby('CustomerID').agg({
+                        'InvoiceDate': lambda x: (max_date - x.max()).days, # Recency
+                        'CustomerID': 'count',                             # Frequency
+                        'Total_Amount': 'sum'                              # Monetary
+                    }).rename(columns={'InvoiceDate': 'R', 'CustomerID': 'F', 'Total_Amount': 'M'})
                     
-                    # Hiển thị 10 dòng kết quả đầu tiên cho người dùng xem trước
-                    st.subheader("Xem trước kết quả dự báo (10 dòng đầu tiên)")
-                    st.dataframe(data.head(10), use_container_width=True)
+                    # Tính toán chỉ số T (Nhịp điệu thời gian tương tác/Tenure)
+                    tenure = raw_df.groupby('CustomerID')['InvoiceDate'].agg(lambda x: (x.max() - x.min()).days)
+                    rfmt_df['T'] = tenure
                     
-                    # Vẽ biểu đồ phân tích tỷ lệ khách hàng quay lại bằng Plotly
+                    # Giữ lại bảng RFMT gốc làm kết quả hiển thị (Yêu cầu số 1 của bạn)
+                    rfmt_output = rfmt_df.copy().reset_index()
+                    
+                    # --- BƯỚC 2: CHUẨN HÓA VÀ DỰ BÁO CỤM (Yêu cầu số 2 của bạn) ---
+                    features = rfmt_df[['R', 'F', 'M', 'T']]
+                    features_scaled = scaler.transform(features)
+                    
+                    rfmt_output['Cluster_ID'] = kmeans.predict(features_scaled)
+                    
+                    # --- BƯỚC 3: DỰ BÁO TÁI MUA TRONG 30 NGÀY TỚI (Yêu cầu số 3 của bạn) ---
+                    predictions = prediction_model.predict(features_scaled)
+                    rfmt_output['Dự_Báo_30_Ngày_Tới'] = np.where(predictions == 1, 'Quay lại (Will Return)', 'Không quay lại (Churn)')
+                    
+                    # --- HIỂN THỊ KẾT QUẢ CUỐI CÙNG ---
+                    st.success("🎉 Đã xử lý và kết xuất dữ liệu thành công theo đúng mô hình của bài báo!")
+                    
+                    st.subheader("📋 Bảng kết quả định danh và phân tích hành vi khách hàng toàn diện")
+                    st.dataframe(rfmt_output, use_container_width=True)
+                    
+                    # Nút Tải xuống file kết quả tổng hợp
                     st.write("---")
-                    st.subheader("Biểu đồ phân tích kết quả dự báo (Visual Analytics)")
-                    
-                    fig_pie = px.pie(data, names='Status', title='Tỷ lệ phân bổ hành vi Tái mua hàng tổng thể', 
-                                     color='Status', color_discrete_map={'Will Return':'#2ca02c', 'Not Return':'#d62728'}, hole=0.4)
-                    st.plotly_chart(fig_pie, use_container_width=True)
-                    
-                    # Tạo nút cho phép người dùng tải xuống file kết quả đã chấm điểm nhãn
-                    st.write("---")
-                    csv_data = data.to_csv(index=False).encode('utf-8')
+                    csv_bytes = rfmt_output.to_csv(index=False).encode('utf-8')
                     st.download_button(
-                        label="📥 Tải xuống file kết quả dự báo hoàn chỉnh (CSV)",
-                        data=csv_data,
-                        file_name="customer_repurchase_predictions_output.csv",
+                        label="📥 Tải xuống bảng kết quả tổng hợp (RFMT + Cluster + Dự báo).csv",
+                        data=csv_bytes,
+                        file_name="hybrid_framework_output.csv",
                         mime="text/csv"
                     )
                 except Exception as e:
-                    st.error(f"❌ Đã xảy ra lỗi trong quá trình xử lý file hàng loạt: {e}")
+                    st.error(f"❌ Lỗi trong quá trình tính toán đặc trưng RFMT từ file thô: {e}")
