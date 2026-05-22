@@ -70,7 +70,7 @@ def try_load_local():
     """Try loading from disk (local dev only)."""
     for path in [
         "hybrid_customer_segmentation_prediction_model__1_.pkl",
-        "/mnt/user-data/uploads/hybrid_customer_segmentation_prediction_model__1_.pkl",
+        "/mnt/user-data/uploads/hybrid_customer_segmentation_prediction_model (1).pkl",
     ]:
         try:
             with open(path, "rb") as f:
