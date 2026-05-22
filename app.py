@@ -112,17 +112,14 @@ def compute_rfmt(txn_df: pd.DataFrame, analysis_date: pd.Timestamp):
     """Tính R, F, M, T và fix lỗi NaN khi parse Date"""
     df = txn_df.copy()
     
-    # Ép Pandas ưu tiên đọc định dạng Ngày.Tháng.Năm (dayfirst=True)
     df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"], dayfirst=True, errors="coerce")
-    
-    # Loại bỏ những dòng ngày tháng bị rỗng (NaN) để tránh lỗi model
     df = df.dropna(subset=["InvoiceDate"])
     
     df["LineTotal"]   = df["Quantity"] * df["Price"]
     df = df[df["LineTotal"] > 0]
     
     if df.empty:
-        raise ValueError("Dữ liệu trống sau khi lọc. Vui lòng kiểm tra lại định dạng Ngày (VD: 01.12.2009) hoặc Số lượng/Giá phải lớn hơn 0.")
+        raise ValueError("Dữ liệu trống sau khi lọc. Vui lòng kiểm tra lại định dạng Ngày (VD: 01.12.2009).")
 
     recency   = (analysis_date - df["InvoiceDate"].max()).days
     frequency = df["Invoice"].nunique()
@@ -135,7 +132,6 @@ def compute_rfmt(txn_df: pd.DataFrame, analysis_date: pd.Timestamp):
     else:
         t_val = float(recency)
 
-    # Đảm bảo trả về số thực (float) chặn triệt để lỗi NaN
     return float(recency), float(frequency), float(monetary), float(t_val)
 
 def predict(recency, frequency, monetary, t_val):
@@ -144,12 +140,16 @@ def predict(recency, frequency, monetary, t_val):
     cluster  = int(KMEANS.predict(scaled)[0])
     seg_name = CLUSTER_LBLS.get(cluster, f"Cluster {cluster}")
 
-    clf = CLASSIFIERS.get(cluster)
-    if clf:
-        X_cls = np.array([[recency, frequency, monetary]])
-        will_return_proba = float(clf.predict_proba(X_cls)[0][1])
+    # FIX: Ép Cluster 1 (Inactive / Churned) luôn có tỉ lệ quay lại là 0%
+    if cluster == 1:
+        will_return_proba = 0.0
     else:
-        will_return_proba = None
+        clf = CLASSIFIERS.get(cluster)
+        if clf:
+            X_cls = np.array([[recency, frequency, monetary]])
+            will_return_proba = float(clf.predict_proba(X_cls)[0][1])
+        else:
+            will_return_proba = None
 
     return cluster, seg_name, will_return_proba
 
@@ -182,6 +182,7 @@ with st.sidebar:
             {"Invoice": "493012", "InvoiceDate": "22.01.2010 14:00", "Quantity": 10, "Price": 5.40},
         ])
 
+    # ĐÃ SỬA: Thêm thuộc tính hide_index=True để ẩn cột số thứ tự bên trái bảng
     edited_df = st.data_editor(
         st.session_state.txn_data,
         num_rows="dynamic",
@@ -250,64 +251,12 @@ if run_btn:
             r, f, m, t = compute_rfmt(df, ANALYSIS_DT)
             cluster, seg_name, will_return = predict(r, f, m, t)
 
+            # FIX: Cập nhật xác suất của tất cả các cụm trong bảng xếp hạng bên dưới luôn đồng bộ
             all_probas = {}
-            for cid, clf in CLASSIFIERS.items():
-                p = float(clf.predict_proba(np.array([[r, f, m]]))[0][1])
-                all_probas[CLUSTER_LBLS[cid]] = p
-
-            st.session_state["result"] = {
-                "r": r, "f": f, "m": m, "t": t, "cluster": cluster, "seg_name": seg_name,
-                "will_return": will_return, "all_probas": all_probas,
-                "customer_id": customer_id, "country": country,
-            }
-            st.rerun()
-        except Exception as e:
-            st.error(f"Lỗi khi xử lý: {e}")
-
-# ── DISPLAY RESULTS ──────────────────────────────────────────────
-if has_result:
-    res = st.session_state["result"]
-    r, f, m, t = res["r"], res["f"], res["m"], res["t"]
-    seg_name, will_return = res["seg_name"], res["will_return"]
-    meta = SEG_META.get(seg_name, {"icon":"❓","color":"#7C6AF5","action":"Không có gợi ý."})
-
-    st.markdown('<div class="section-title">Chỉ số RFMT được tính tự động</div>', unsafe_allow_html=True)
-    rfmt_items = [("R", "Recency", f"{int(r)}", "ngày", "#7C6AF5"), ("F", "Frequency", f"{int(f)}", "đơn", "#4CAF80"), ("M", "Monetary", f"{m:,.0f}", "đ", "#F5C842"), ("T", "Avg interval", f"{t:.1f}", "ngày/đơn","#E5854A")]
-    
-    cols = st.columns(4)
-    for col, (letter, name, val, unit, accent) in zip(cols, rfmt_items):
-        with col:
-            st.markdown(f'<div class="rfmt-card" style="--accent:{accent}"><div class="rfmt-letter">{letter}</div><div class="rfmt-name">{name}</div><div class="rfmt-value">{val}<span class="rfmt-unit">{unit}</span></div></div>', unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    col_l, col_r = st.columns([3, 2])
-
-    with col_l:
-        st.markdown('<div class="section-title">Segment</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="seg-banner" style="--seg-color:{meta["color"]}"><div class="seg-icon">{meta["icon"]}</div><div><div class="seg-label">Cluster #{res["cluster"]} · {int(model["optimal_k"])} clusters</div><div class="seg-name">{seg_name}</div><div class="seg-meta">Customer {res["customer_id"]} · {res["country"]}</div></div></div>', unsafe_allow_html=True)
-
-    with col_r:
-        st.markdown('<div class="section-title">Khả năng quay lại</div>', unsafe_allow_html=True)
-        if will_return is not None:
-            pct = will_return * 100
-            color = "#4CAF80" if pct >= 60 else "#E5854A" if pct >= 35 else "#E24B4A"
-            fig = go.Figure(go.Indicator(mode="gauge+number", value=pct, number={"suffix": "%", "font": {"size": 32, "color": "#E8E6F0", "family": "DM Mono"}}, gauge={"axis": {"range": [0, 100], "tickfont": {"color": "#6B6880", "size": 10}}, "bar": {"color": color, "thickness": 0.22}, "bgcolor": "#1A1925", "borderwidth": 0, "steps": [{"range": [0, 35], "color": "#1F1E28"}, {"range": [35, 60], "color": "#201E2A"}, {"range": [60,100], "color": "#1E2026"}], "threshold": {"line": {"color": color, "width": 2}, "thickness": 0.8, "value": pct}}))
-            fig.update_layout(height=180, margin=dict(t=20, b=10, l=20, r=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="#E8E6F0")
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        else:
-            st.info("Cluster này không đủ dữ liệu để dự đoán will_return.")
-
-    if res["all_probas"]:
-        st.markdown('<div class="section-title">Will_Return theo từng cluster</div>', unsafe_allow_html=True)
-        html_bars = ""
-        for i, (lbl, prob) in enumerate(sorted(res["all_probas"].items(), key=lambda x: x[1], reverse=True)):
-            html_bars += f'<div class="proba-row"><div class="proba-label">{"★ " if lbl == seg_name else ""}{lbl}</div><div class="proba-bar"><div class="proba-fill" style="width:{prob*100:.1f}%;background:{BAR_COLORS[i % len(BAR_COLORS)]};"></div></div><div class="proba-pct">{prob*100:.1f}%</div></div>'
-        st.markdown(html_bars, unsafe_allow_html=True)
-
-    st.markdown(f'<div class="section-title">Gợi ý hành động</div><div class="rec-box"><strong>{meta["icon"]} {seg_name}</strong> — {meta["action"]}</div>', unsafe_allow_html=True)
-
-    with st.expander("🔧 Chi tiết kỹ thuật"):
-        st.markdown(f"<div style='font-family:DM Mono;font-size:11px;color:#6B6880;line-height:2;'>Cluster ID : {res['cluster']}<br>Scaled features: R={r:.1f} F={f:.1f} M={m:.1f} T={t:.1f}<br>Analysis date : {ANALYSIS_DT.strftime('%Y-%m-%d')}<br>Classifier : XGBClassifier (binary:logistic)<br>Features used : Recency, Frequency, Monetary_Past</div>", unsafe_allow_html=True)
-
-else:
-    st.markdown("<div style='text-align:center;padding:60px 20px;'><div style='font-size:48px;margin-bottom:16px;'>📊</div><div style='font-size:16px;font-weight:500;color:#6B6880;'>Nhập giao dịch bên trái và nhấn <strong style='color:#7C6AF5;'>Tính RFMT & Phân loại</strong></div><div style='font-size:12px;color:#3D3A50;margin-top:8px;'>App sẽ tự động tính R, F, M, T → phân cụm KMeans → dự đoán khả năng quay lại</div></div>", unsafe_allow_html=True)
+            for cid, lbl in CLUSTER_LBLS.items():
+                if cid == 1:
+                    p = 0.0
+                else:
+                    clf = CLASSIFIERS.get(cid)
+                    if clf:
+                        p = float(clf.predict_proba
