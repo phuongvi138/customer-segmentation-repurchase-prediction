@@ -110,14 +110,15 @@ BAR_COLORS = ["#7C6AF5", "#4CAF80", "#F5C842", "#E5854A", "#E24B4A"]
 
 def compute_rfmt(txn_df: pd.DataFrame, analysis_date: pd.Timestamp):
     df = txn_df.copy()
-    df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"], dayfirst=True, errors="coerce")
+    # Tự động parse định dạng thời gian trực tiếp từ lịch chọn mẫu
+    df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"], errors="coerce")
     df = df.dropna(subset=["InvoiceDate"])
     
     df["LineTotal"]   = df["Quantity"] * df["Price"]
     df = df[df["LineTotal"] > 0]
     
     if df.empty:
-        raise ValueError("Dữ liệu trống sau khi lọc. Vui lòng kiểm tra lại định dạng Ngày (VD: 01.12.2009).")
+        raise ValueError("Dữ liệu trống hoặc ngày tháng không hợp lệ. Vui lòng kiểm tra lại.")
 
     recency   = (analysis_date - df["InvoiceDate"].max()).days
     frequency = df["Invoice"].nunique()
@@ -138,11 +139,10 @@ def predict(recency, frequency, monetary, t_val):
     cluster  = int(KMEANS.predict(scaled)[0])
     seg_name = CLUSTER_LBLS.get(cluster, f"Cluster {cluster}")
 
-    # LỚP BẢO VỆ 1 & 2: Nếu là Cluster 1 hoặc tên chứa Churned/Inactive -> Ép cứng 0% luôn
+    # Khóa cứng 0% cho nhóm Churned
     if cluster == 1 or "churn" in seg_name.lower() or "inactive" in seg_name.lower():
         will_return_proba = 0.0
     else:
-        # LỚP BẢO VỆ 3: Dùng khối try-except để chặn đứng mọi khả năng lỗi NoneType
         clf = CLASSIFIERS.get(cluster) if CLASSIFIERS else None
         if clf is not None:
             try:
@@ -174,25 +174,32 @@ with st.sidebar:
     country     = st.text_input("Country", value="United Kingdom", label_visibility="collapsed")
 
     st.markdown('<div class="section-title">Lịch sử giao dịch</div>', unsafe_allow_html=True)
-    st.caption("Định dạng Date: DD.MM.YYYY HH:MM")
+    st.caption("Click đúp vào ô Date để chọn Ngày & Giờ từ lịch")
 
+    # ĐÃ SỬA: Chuyển dữ liệu khởi tạo ban đầu sang dạng Datetime chuẩn của Python để kích hoạt bộ chọn lịch
     if "txn_data" not in st.session_state:
         st.session_state.txn_data = pd.DataFrame([
-            {"Invoice": "489434", "InvoiceDate": "01.12.2009 07:45", "Quantity": 12, "Price": 6.95},
-            {"Invoice": "489435", "InvoiceDate": "15.12.2009 09:30", "Quantity": 6,  "Price": 12.50},
-            {"Invoice": "491203", "InvoiceDate": "03.01.2010 11:15", "Quantity": 4,  "Price": 8.75},
-            {"Invoice": "493012", "InvoiceDate": "22.01.2010 14:00", "Quantity": 10, "Price": 5.40},
+            {"Invoice": "489434", "InvoiceDate": dt.datetime(2009, 12, 1, 7, 45), "Quantity": 12, "Price": 6.95},
+            {"Invoice": "489435", "InvoiceDate": dt.datetime(2009, 12, 15, 9, 30), "Quantity": 6,  "Price": 12.50},
+            {"Invoice": "491203", "InvoiceDate": dt.datetime(2010, 1, 3, 11, 15), "Quantity": 4,  "Price": 8.75},
+            {"Invoice": "493012", "InvoiceDate": dt.datetime(2010, 1, 22, 14, 0), "Quantity": 10, "Price": 5.40},
         ])
 
+    # ĐÃ SỬA: Cấu hình DatetimeColumn (chọn lịch) và đổi định dạng tiền sang £ (Bảng Anh)
     edited_df = st.data_editor(
         st.session_state.txn_data,
         num_rows="dynamic",
         use_container_width=True,
         column_config={
             "Invoice":     st.column_config.TextColumn("Invoice", width="small"),
-            "InvoiceDate": st.column_config.TextColumn("Date", width="medium"),
+            "InvoiceDate": st.column_config.DatetimeColumn(
+                "Date & Time",
+                format="DD/MM/YYYY HH:mm",
+                step=60, # Chọn giờ chính xác đến từng phút
+                width="medium"
+            ),
             "Quantity":    st.column_config.NumberColumn("Qty", min_value=1, width="small"),
-            "Price":       st.column_config.NumberColumn("Price", min_value=0.01, format="%.2f", width="small"),
+            "Price":       st.column_config.NumberColumn("Price", min_value=0.01, format="£%.2f", width="small"),
         },
         hide_index=True,
         key="txn_editor",
@@ -252,7 +259,6 @@ if run_btn:
             r, f, m, t = compute_rfmt(df, ANALYSIS_DT)
             cluster, seg_name, will_return = predict(r, f, m, t)
 
-            # Đồng bộ an toàn tỷ lệ của toàn bộ bảng xếp hạng các cụm bên dưới
             all_probas = {}
             for cid, lbl in CLUSTER_LBLS.items():
                 if cid == 1 or "churn" in lbl.lower() or "inactive" in lbl.lower():
@@ -285,7 +291,13 @@ if has_result:
     meta = SEG_META.get(seg_name, {"icon":"❓","color":"#7C6AF5","action":"Không có gợi ý."})
 
     st.markdown('<div class="section-title">Chỉ số RFMT được tính tự động</div>', unsafe_allow_html=True)
-    rfmt_items = [("R", "Recency", f"{int(r)}", "ngày", "#7C6AF5"), ("F", "Frequency", f"{int(f)}", "đơn", "#4CAF80"), ("M", "Monetary", f"{m:,.0f}", "đ", "#F5C842"), ("T", "Avg interval", f"{t:.1f}", "ngày/đơn","#E5854A")]
+    # ĐÃ SỬA: Đổi hiển thị giá trị tiền tệ tổng sang £ (Bảng Anh)
+    rfmt_items = [
+        ("R", "Recency", f"{int(r)}", "ngày", "#7C6AF5"), 
+        ("F", "Frequency", f"{int(f)}", "đơn", "#4CAF80"), 
+        ("M", "Monetary", f"£{m:,.2f}", "", "#F5C842"), 
+        ("T", "Avg interval", f"{t:.1f}", "ngày/đơn", "#E5854A")
+    ]
     
     cols = st.columns(4)
     for col, (letter, name, val, unit, accent) in zip(cols, rfmt_items):
