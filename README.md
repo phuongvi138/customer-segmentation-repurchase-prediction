@@ -8,6 +8,8 @@ The framework integrates:
 - SMOTE-Tomek imbalance handling
 
 The study evaluates whether segment-specific predictive models outperform traditional global prediction approaches.
+Web demo: https://customer-segmentation-repurchase-prediction-group7.streamlit.app
+
 ## Contributions
 - Extended traditional RFM into RFMT behavioral analysis
 - Compared multiple clustering algorithms
